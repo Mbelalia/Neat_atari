@@ -133,7 +133,7 @@ def create_cache_key(inputs_weights, bias, response):
     if ABLATION_CONFIG['USE_FAST_KEYS']:
         # Improved fast key with better diversity
         key_val = 0
-        limit = min(len(inputs_weights), 16)  # Increased from 12 for better uniqueness
+        limit = min(len(inputs_weights), 16)  
         
         for i, (input_val, weight) in enumerate(inputs_weights[:limit]):
             # Higher precision for better uniqueness
@@ -153,13 +153,13 @@ def create_cache_key(inputs_weights, bias, response):
         key_parts = []
         for input_val, weight in inputs_weights[:12]:
             # Higher precision quantization
-            int_input = int(input_val * 1000)   # Was 50, now 1000
-            int_weight = int(weight * 1000)     # Was 50, now 1000
+            int_input = int(input_val * 1000)   
+            int_weight = int(weight * 1000)     
             key_parts.append((int_input, int_weight))
         
         # Higher precision for bias and response
-        int_bias = int(bias * 1000)         # Was 50, now 1000
-        int_response = int(response * 1000) # Was 50, now 1000
+        int_bias = int(bias * 1000)         
+        int_response = int(response * 1000) 
         return hash((tuple(key_parts), int_bias, int_response))
 
 def should_cache_computation(inputs_weights):
@@ -286,7 +286,6 @@ def compute_neuron_direct(inputs_weights, bias, response):
     return process_neural_output(final_output)
 
 def compute_neuron_with_generational_cache(inputs_weights, bias, response):
-    """FIXED: Compute neuron output with LRU caching - NO size limits during generation"""
     global cache_stats
     
     cache_stats['total_calls'] += 1
@@ -328,7 +327,7 @@ def compute_neuron_with_generational_cache(inputs_weights, bias, response):
         return result
 
 class GenerationalNeuralNetwork:
-    """Neural network that builds cache across generations"""
+    
     
     def __init__(self, genome, config):
         self.genome = genome
@@ -388,11 +387,6 @@ class GenerationalNeuralNetwork:
         return tuple(evaluation_order)
     
     def activate(self, inputs):
-        """
-        Activate network using generational cache.
-        Each neuron computation checks the generational cache first,
-        building up cached results across generations.
-        """
         # Reset node values
         for key in self.node_values:
             self.node_values[key] = 0.0
@@ -421,7 +415,6 @@ class GenerationalNeuralNetwork:
         return [self.node_values[key] for key in self.output_keys]
 
 def create_cache_optimized_features(obs):
-    """FIXED: Create feature vector with proper quantization for diversity"""
     try:
         # Extract basic game state
         px = obs[RAM['paddle_x']] / 255.0
@@ -430,11 +423,9 @@ def create_cache_optimized_features(obs):
         lives = obs[RAM['lives']] / 5.0
         score = min(obs[RAM['score']] / 1000.0, 10.0)
         
-        # FIXED: Much less aggressive quantization for diversity
+        
         if ABLATION_CONFIG['FEATURE_QUANTIZATION']:
-            # OLD: precision = 5  # TOO AGGRESSIVE - causes identical inputs
-            # NEW: Much finer precision for diversity while still enabling cache hits
-            precision = 50  # 0.02 precision → 0.002 precision (10x more diverse)
+            precision = 50  
             px = round(px * precision) / precision
             bx = round(bx * precision) / precision
             by = round(by * precision) / precision
@@ -496,11 +487,9 @@ def create_cache_optimized_features(obs):
         return (obs / 255.0 + np.random.uniform(-0.001, 0.001, obs.shape)).astype(np.float32)
 
 def create_generational_network(genome, config):
-    """Create neural network with generational caching"""
     return GenerationalNeuralNetwork(genome, config)
 
 def eval_genome(genome, config):
-    """Evaluate genome with generational cache building"""
     try:
         net = create_generational_network(genome, config)
     except Exception as e:
@@ -621,7 +610,6 @@ def eval_genome(genome, config):
     return max(fitness, -1.0)
 
 def get_generational_cache_stats():
-    """Get comprehensive cache statistics"""
     total_calls = cache_stats['total_calls']
     
     # If caching is disabled, return zero stats
@@ -669,7 +657,6 @@ def get_generational_cache_stats():
     }
 
 def trim_cache_between_generations():
-    """FIXED: Trim cache between generations using proper LRU eviction"""
     global generational_cache
     
     if not ABLATION_CONFIG['USE_CACHING']:
@@ -691,14 +678,8 @@ def trim_cache_between_generations():
     # Calculate how many entries to remove
     excess = current_size - target_size
     print(f"Need to remove: {excess:,} entries")
-    
-    # CRITICAL FIX: Remove from the BEGINNING (oldest entries in LRU)
-    # Since OrderedDict maintains insertion/access order, 
-    # the beginning has the least recently used items
-    
     trim_start = time.time()
     
-    # Convert to list to avoid "dictionary changed size during iteration"
     keys_to_remove = list(generational_cache.keys())[:excess]
     
     print(f"Removing {len(keys_to_remove):,} oldest entries...")
@@ -722,7 +703,6 @@ def trim_cache_between_generations():
         print(f"❌ ERROR: Still over target by {final_size - target_size:,}")
 
 def clear_generational_cache():
-    """Clear entire generational cache (for new experiments)"""
     global generational_cache, cache_stats
     
     print(f"DEBUG: Clearing cache. Current size: {len(generational_cache)}")
@@ -737,7 +717,6 @@ def clear_generational_cache():
     print("DEBUG: Cache stats reset")
 
 def print_generational_cache_analysis():
-    """Print detailed analysis of generational cache performance"""
     if not ABLATION_CONFIG['CACHE_DEBUG']:
         return
     
@@ -791,7 +770,6 @@ def print_generational_cache_analysis():
         print(f"  • Note: Cache temporarily over limit by {excess:,} entries (will trim next generation)")
 
 def eval_genomes(genomes, config):
-    """FIXED: Proper cache management - trim BEFORE generation, grow during"""
     global CURRENT_GENERATION
     
     # CRITICAL FIX: Trim cache BEFORE starting the generation (except generation 1)
@@ -844,7 +822,6 @@ def eval_genomes(genomes, config):
     print_generational_cache_analysis()
 
 def get_research_metrics():
-    """Get comprehensive metrics for ablation study research"""
     stats = get_generational_cache_stats()
     cache_perf = stats['cache_performance']
     
@@ -872,7 +849,6 @@ def get_research_metrics():
     }
 
 class AblationReporter(neat.reporting.BaseReporter):
-    """Reporter for ablation study experiments with proper cache management"""
     
     def __init__(self, config_path, experiment_name="generational_cache"):
         self.best_genomes = []
@@ -914,7 +890,6 @@ class AblationReporter(neat.reporting.BaseReporter):
         cache_metrics = metrics['cache_metrics']
         config_metrics = metrics['configuration']
         
-        # FIXED: Calculate proper cache utilization (should be decimal, not >1.0)
         cache_utilization = cache_metrics['cache_utilization']
         
         # Store generation data
@@ -928,7 +903,7 @@ class AblationReporter(neat.reporting.BaseReporter):
         }
         self.generation_stats.append(generation_data)
         
-        # Write to CSV - FIXED: Use proper cache_utilization (decimal)
+        # Write to CSV 
         with open(self.csv_filename, 'a', newline='') as csvfile:
             csv.writer(csvfile).writerow([
                 generation, best_genome.fitness, avg_fitness, elapsed_time,
@@ -961,14 +936,6 @@ class AblationReporter(neat.reporting.BaseReporter):
         print(f"Strategy: Grow during generation, trim between generations")
 
 def run_ablation_experiment(config_path, experiment_config, num_generations=50, experiment_name="test"):
-    """
-    Run a single ablation experiment with specified configuration.
-    Args:
-        config_path: Path to NEAT config file
-        experiment_config: Dictionary with ABLATION_CONFIG settings
-        num_generations: Number of generations to run (default: 50)
-        experiment_name: Name for this experiment
-    """
     global ABLATION_CONFIG, CURRENT_GENERATION
     
     # Update global configuration
@@ -1036,58 +1003,7 @@ def run_ablation_experiment(config_path, experiment_config, num_generations=50, 
         traceback.print_exc()
         return None, reporter.generation_stats
 
-# Test function to verify LRU behavior
-def test_lru_cache_behavior():
-    """Test the LRU cache behavior"""
-    global generational_cache
-    
-    print("🧪 TESTING LRU CACHE BEHAVIOR")
-    
-    # Save original state
-    original_cache = dict(generational_cache)
-    original_config = dict(ABLATION_CONFIG)
-    
-    # Set up test configuration
-    ABLATION_CONFIG.update({
-        'USE_CACHING': True,
-        'CACHE_SIZE': 10,  # Small cache for testing
-    })
-    
-    # Clear cache
-    generational_cache.clear()
-    
-    print("1. Adding 15 items to cache (limit=10)...")
-    for i in range(15):
-        key = f"test_key_{i}"
-        generational_cache[key] = f"test_value_{i}"
-    
-    print(f"   Cache size after adding 15 items: {len(generational_cache)}")
-    print(f"   Cache keys: {list(generational_cache.keys())}")
-    
-    print("2. Accessing some items to change LRU order...")
-    # Access items 5, 7, 9 to make them most recently used
-    for i in [5, 7, 9]:
-        key = f"test_key_{i}"
-        if key in generational_cache:
-            value = generational_cache[key]
-            del generational_cache[key]
-            generational_cache[key] = value  # Move to end
-    
-    print(f"   After accessing items 5,7,9: {list(generational_cache.keys())}")
-    
-    print("3. Trimming cache to target size (10)...")
-    trim_cache_between_generations()
-    
-    print(f"   Final cache size: {len(generational_cache)}")
-    print(f"   Final cache keys: {list(generational_cache.keys())}")
-    print(f"   Should contain items 5,7,9 and the newest items (most recently used)")
-    
-    # Restore original state
-    generational_cache.clear()
-    generational_cache.update(original_cache)
-    ABLATION_CONFIG.update(original_config)
-    
-    print("✅ LRU test completed - original state restored")
+
 
 # VALIDATION AND TESTING FUNCTIONS
 def validate_cache_reset():
@@ -1169,145 +1085,9 @@ if __name__ == "__main__":
     
     print("FORCED RESET: All cache variables cleared and validated")
     
-    import sys
-    if len(sys.argv) > 1:
-        command = sys.argv[1]
+    print("Running with LRU cache management...")
+    print("✅ Cache grows during generation, trims between generations")
+    print("✅ Cache utilization will stay ≤ 100% in CSV output")
         
-        # Check for generation count argument
-        num_gens = 50  # default changed to 50
-        if len(sys.argv) > 2 and sys.argv[2].isdigit():
-            num_gens = int(sys.argv[2])
-        
-        if command == 'test_lru':
-            # Test LRU cache behavior
-            print("🧪 TESTING LRU CACHE BEHAVIOR")
-            test_lru_cache_behavior()
-            
-        elif command == 'baseline':
-            # Run baseline only (no cache, same computation complexity)
-            baseline_config = {
-                'USE_CACHING': False, 
-                'COMPUTATION_COMPLEXITY': 'complex',
-                'PRECISION_LEVEL': 'minimal_cache',  # Same processing as cached version
-                'FEATURE_QUANTIZATION': True
-            }
-            run_ablation_experiment(config_path, baseline_config, num_gens, "baseline")
-            
-        elif command == 'cached':
-            # Run cached version with FIXED LRU trimming
-            cached_config = {
-                'USE_CACHING': True,
-                'CACHE_EVICTION_PERCENTAGE': 0.1,  # 10% batch eviction
-                'COMPUTATION_COMPLEXITY': 'complex',  # Same complexity as baseline
-                'USE_CLAMPING': True,
-                'CLAMP_METHOD': 'fp16',
-                'USE_ROUNDING': True,
-                'PRECISION_LEVEL': 'minimal_cache',  # Same processing as baseline
-                'USE_FAST_KEYS': True,
-                'USE_CONDITIONAL_CACHING': True,
-                'FEATURE_QUANTIZATION': True
-            }
-            run_ablation_experiment(config_path, cached_config, num_gens, "cached_fixed_lru")
-            
-        elif command == 'optimized':
-            # Run optimized cache version
-            optimized_config = {
-                'USE_CACHING': True,
-                'CACHE_EVICTION_PERCENTAGE': 0.15,  # 15% batch eviction for ultra_complex
-                'COMPUTATION_COMPLEXITY': 'ultra_complex',  # Higher complexity benefits more from cache
-                'USE_CLAMPING': True,
-                'CLAMP_METHOD': 'fp16',
-                'USE_ROUNDING': True,
-                'PRECISION_LEVEL': 'high_cache',  # More cache-friendly
-                'USE_FAST_KEYS': True,
-                'USE_CONDITIONAL_CACHING': True,
-                'FEATURE_QUANTIZATION': True
-            }
-            run_ablation_experiment(config_path, optimized_config, num_gens, "optimized_fixed_lru")
-            
-        elif command == 'compare':
-            # Run both baseline and cached for direct comparison
-            print("Running BASELINE experiment...")
-            baseline_config = {
-                'USE_CACHING': False, 
-                'COMPUTATION_COMPLEXITY': 'complex',
-                'PRECISION_LEVEL': 'minimal_cache',
-                'FEATURE_QUANTIZATION': True
-            }
-            baseline_winner, baseline_stats = run_ablation_experiment(config_path, baseline_config, num_gens, "baseline")
-            
-            print("\n" + "="*80)
-            print("Running CACHED experiment with FIXED LRU trimming...")
-            force_complete_cache_reset()  # Reset for second experiment
-            
-            cached_config = {
-                'USE_CACHING': True,
-                'CACHE_EVICTION_PERCENTAGE': 0.1,  # 10% batch eviction
-                'COMPUTATION_COMPLEXITY': 'complex',
-                'PRECISION_LEVEL': 'minimal_cache',
-                'FEATURE_QUANTIZATION': True
-            }
-            cached_winner, cached_stats = run_ablation_experiment(config_path, cached_config, num_gens, "cached_fixed_lru")
-            
-            # Compare results
-            print("\n" + "="*80)
-            print("COMPARISON RESULTS")
-            print("="*80)
-            if baseline_winner and cached_winner:
-                print(f"Baseline fitness: {baseline_winner.fitness:.2f}")
-                print(f"Cached fitness: {cached_winner.fitness:.2f}")
-                improvement = cached_winner.fitness - baseline_winner.fitness
-                print(f"Fitness improvement: {improvement:.2f}")
-            
-        elif command == 'custom':
-            # Custom configuration from command line args
-            exp_name = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].isdigit() else "custom"
-            cache_enabled = sys.argv[3].lower() == 'true' if len(sys.argv) > 3 else True
-            complexity = sys.argv[4] if len(sys.argv) > 4 else 'complex'
-            precision = sys.argv[5] if len(sys.argv) > 5 else 'minimal_cache'
-            eviction_pct = float(sys.argv[6]) if len(sys.argv) > 6 else 0.1
-            
-            # If second argument is a number, it's generation count
-            if len(sys.argv) > 2 and sys.argv[2].isdigit():
-                num_gens = int(sys.argv[2])
-                exp_name = sys.argv[3] if len(sys.argv) > 3 else "custom"
-                cache_enabled = sys.argv[4].lower() == 'true' if len(sys.argv) > 4 else True
-                complexity = sys.argv[5] if len(sys.argv) > 5 else 'complex'
-                precision = sys.argv[6] if len(sys.argv) > 6 else 'minimal_cache'
-                eviction_pct = float(sys.argv[7]) if len(sys.argv) > 7 else 0.1
-            
-            custom_config = {
-                'USE_CACHING': cache_enabled,
-                'CACHE_EVICTION_PERCENTAGE': eviction_pct,
-                'COMPUTATION_COMPLEXITY': complexity,
-                'PRECISION_LEVEL': precision,
-                'USE_CLAMPING': True,
-                'CLAMP_METHOD': 'fp16',
-                'FEATURE_QUANTIZATION': True
-            }
-            run_ablation_experiment(config_path, custom_config, num_gens, exp_name)
-            
-        else:
-            print("Available commands:")
-            print("  test_lru                 - Test LRU cache behavior")
-            print("  baseline [gens]          - Baseline (no cache) experiment")
-            print("  cached [gens]            - Cached experiment with FIXED LRU trimming")
-            print("  optimized [gens]         - Optimized cache experiment with FIXED LRU trimming")
-            print("  compare [gens]           - Run both baseline and cached for comparison")
-            print("  custom [gens] <name> <cache_bool> <complexity> <precision> <eviction_%> - Custom config")
-            print(f"  Example: python {sys.argv[0]} test_lru")
-            print(f"  Example: python {sys.argv[0]} compare 25")
-            print(f"  Example: python {sys.argv[0]} cached 30")
-            print(f"  Example: python {sys.argv[0]} custom 30 test_lru true complex minimal_cache 0.2")
-    else:
-        # Default: Use fixed ABLATION_CONFIG directly with FIXED LRU trimming
-        print("Running with FIXED LRU cache management...")
-        print("✅ Cache grows during generation, trims between generations")
-        print("✅ Cache utilization will stay ≤ 100% in CSV output")
-        
-        # Test LRU behavior first
-        print("\n🧪 Testing LRU cache behavior before experiment...")
-        test_lru_cache_behavior()
-        
-        print("\n🚀 Starting experiment with FIXED LRU cache management...")
-        run_ablation_experiment(config_path, dict(ABLATION_CONFIG), 50, "fixed_lru_cache_WORKING")
+    print("\n🚀 Starting experiment with FIXED LRU cache management...")
+    run_ablation_experiment(config_path, dict(ABLATION_CONFIG), 50, "fixed_lru_cache_WORKING")
