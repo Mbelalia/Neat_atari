@@ -7,7 +7,6 @@ import time
 import csv
 import random
 import datetime
-import visualize
 import ale_py
 from collections import OrderedDict
 
@@ -27,48 +26,35 @@ RAM = {
 MAX_STEPS = 43000000
 CURRENT_GENERATION = 1
 
-# FIXED ABLATION STUDY CONFIGURATION
+# Cache configuration
 ABLATION_CONFIG = {
-    # Core cache settings
     'USE_CACHING': True,
-    'CACHE_SIZE': 100000,  # LRU cache size
-    'CACHE_PERSISTENCE': True,  # Keep cache between generations
-    'CACHE_EVICTION_PERCENTAGE': 0.1,  # Remove 10% when cache is full
-    
-    # Computation complexity levels
-    'COMPUTATION_COMPLEXITY': 'complex',  # 'simple', 'medium', 'complex', 'ultra_complex'
-    
-    # FIXED: Less aggressive output processing for diversity
+    'CACHE_SIZE': 100000,
+    'CACHE_PERSISTENCE': True,
+    'CACHE_EVICTION_PERCENTAGE': 0.1,
+    'COMPUTATION_COMPLEXITY': 'complex',
     'USE_CLAMPING': True,
-    'CLAMP_METHOD': 'fp16',  # 'standard' or 'fp16'
+    'CLAMP_METHOD': 'fp16',
     'USE_ROUNDING': True,
     'PRECISION_LEVEL': 'maximum_cache',
-    
-    # Cache key optimization
     'USE_FAST_KEYS': True,
     'USE_CONDITIONAL_CACHING': True,
-    
-    # FIXED: Less aggressive feature quantization
     'FEATURE_QUANTIZATION': True,
-    'FEATURE_SIZE': 128,  # Number of input features to neural network
-    
-    # Debug and analysis
+    'FEATURE_SIZE': 128,
     'ENABLE_DETAILED_TIMING': True,
     'CACHE_DEBUG': True,
     'TRACK_GENERATION_CACHE': True
 }
 
-# FORCE COMPLETE CACHE RESET FUNCTION
 def force_complete_cache_reset():
+    """Reset all cache variables"""
     global generational_cache, cache_stats
     
-    # Force clear any existing cache
     if 'generational_cache' in globals():
         del generational_cache
     if 'cache_stats' in globals():
         del cache_stats
     
-    # Recreate fresh instances
     generational_cache = OrderedDict()    
     cache_stats = {
         'hits': 0, 'misses': 0, 'total_calls': 0,
@@ -80,7 +66,7 @@ def force_complete_cache_reset():
     print(f"Cache size after reset: {len(generational_cache)}")
     print(f"Cache stats after reset: {cache_stats}")
 
-# Initialize cache variables (will be reset in main)
+# Initialize cache variables
 generational_cache = OrderedDict()
 cache_stats = {
     'hits': 0, 'misses': 0, 'total_calls': 0,
@@ -88,26 +74,19 @@ cache_stats = {
     'cache_size_history': [], 'hit_rate_history': []
 }
 
-# Per-generation statistics
-generation_stats = {}
-
 def process_neural_output(raw_output):
+    """Process neural network output with precision control"""
     result = raw_output
     
-    # Apply FP16 clamping if enabled
     if ABLATION_CONFIG['USE_CLAMPING']:
         clamp_method = ABLATION_CONFIG.get('CLAMP_METHOD', 'standard')
         
         if clamp_method == 'fp16':
-            # Convert to FP16 then back to FP32 (natural clamping + quantization)
             result = float(np.float16(result))
-            # FIXED: Wider clamping for more diversity
             result = np.clip(result, -5.0, 5.0)  
         else:
-            # Standard clamping with wider range
             result = np.clip(result, -5.0, 5.0)
     
-    # FIXED: Much less aggressive rounding for diversity
     if ABLATION_CONFIG['USE_ROUNDING']:
         precision = ABLATION_CONFIG['PRECISION_LEVEL']
         
@@ -116,46 +95,38 @@ def process_neural_output(raw_output):
         elif precision == 'high_cache':
             result = round(result * 100) / 100    
         elif precision == 'optimal':
-            result = round(result * 10000) / 10000  # 0.0001 precision (10x more diverse)
+            result = round(result * 10000) / 10000
         elif precision == 'minimal_cache':
-            result = round(result * 100000) / 100000  # 0.00001 precision (even finer)
-        # 'none' - no rounding
+            result = round(result * 100000) / 100000
     
     return float(result)
 
 def create_cache_key(inputs_weights, bias, response):
-    """FIXED: Create cache key with better collision resistance"""
+    """Create cache key with collision resistance"""
     if len(inputs_weights) == 0:
         return None
     
     if ABLATION_CONFIG['USE_FAST_KEYS']:
-        # Improved fast key with better diversity
         key_val = 0
         limit = min(len(inputs_weights), 16)  
         
         for i, (input_val, weight) in enumerate(inputs_weights[:limit]):
-            # Higher precision for better uniqueness
-            int_input = int(input_val * 10000) & 0xFFFFFFFF  # 32-bit mask, higher precision
+            int_input = int(input_val * 10000) & 0xFFFFFFFF
             int_weight = int(weight * 10000) & 0xFFFFFFFF
             
-            # Better bit mixing
             combined = (int_input << 16) ^ int_weight
             key_val ^= combined
-            key_val = ((key_val << 3) | (key_val >> 29)) & 0xFFFFFFFF  # Rotate with better mixing
+            key_val = ((key_val << 3) | (key_val >> 29)) & 0xFFFFFFFF
         
-        # Include bias and response with higher precision
         key_val ^= (int(bias * 10000) << 8) ^ int(response * 10000)
         return key_val & 0xFFFFFFFF
     else:
-        # Traditional approach with higher precision
         key_parts = []
         for input_val, weight in inputs_weights[:12]:
-            # Higher precision quantization
             int_input = int(input_val * 1000)   
             int_weight = int(weight * 1000)     
             key_parts.append((int_input, int_weight))
         
-        # Higher precision for bias and response
         int_bias = int(bias * 1000)         
         int_response = int(response * 1000) 
         return hash((tuple(key_parts), int_bias, int_response))
@@ -165,15 +136,9 @@ def should_cache_computation(inputs_weights):
     if not ABLATION_CONFIG['USE_CONDITIONAL_CACHING']:
         return True
     
-    # Skip very simple computations (overhead > benefit)
-    if len(inputs_weights) < 2:
+    if len(inputs_weights) < 2 or len(inputs_weights) > 50:
         return False
     
-    # Skip very complex computations (unlikely to repeat exactly)
-    if len(inputs_weights) > 50:
-        return False
-    
-    # Skip extreme values (unlikely to have cache hits)
     for input_val, weight in inputs_weights:
         if abs(input_val) > 2.0 or abs(weight) > 3.0:
             return False
@@ -181,18 +146,16 @@ def should_cache_computation(inputs_weights):
     return True
 
 def compute_neuron_direct(inputs_weights, bias, response):
-    """Direct neuron computation with configurable complexity - SAME for cache and non-cache"""
+    """Direct neuron computation with configurable complexity"""
     complexity = ABLATION_CONFIG['COMPUTATION_COMPLEXITY']
     
-    # Phase 1: Input processing with different complexity levels
+    # Phase 1: Input processing
     total = 0.0
     if complexity == 'simple':
-        # Simple weighted sum
         for input_val, weight in inputs_weights:
             total += input_val * weight
     
     elif complexity == 'medium':
-        # Add polynomial terms
         for input_val, weight in inputs_weights:
             linear = input_val * weight
             quadratic_input = 0.1 * (input_val ** 2) * weight
@@ -200,7 +163,6 @@ def compute_neuron_direct(inputs_weights, bias, response):
             total += linear + quadratic_input + quadratic_weight
     
     elif complexity == 'complex':
-        # Add more polynomial terms + trigonometric
         for input_val, weight in inputs_weights:
             linear = input_val * weight
             quadratic_input = 0.1 * (input_val ** 2) * weight
@@ -209,9 +171,7 @@ def compute_neuron_direct(inputs_weights, bias, response):
             total += linear + quadratic_input + quadratic_weight + cubic
     
     elif complexity == 'ultra_complex':
-        # Maximum complexity: polynomials + trigonometric + exponential
         for input_val, weight in inputs_weights:
-            # Polynomial terms
             linear = input_val * weight
             quad_input = 0.1 * (input_val ** 2) * weight
             quad_weight = 0.05 * input_val * (weight ** 2)
@@ -220,7 +180,6 @@ def compute_neuron_direct(inputs_weights, bias, response):
             quartic = 0.001 * (input_val ** 4) * weight
             cross_term = 0.002 * (input_val ** 2) * (weight ** 2)
             
-            # Expensive mathematical operations
             sqrt_term = 0.001 * np.sqrt(abs(input_val) + 1e-8) * weight
             log_term = 0.0005 * np.log(abs(input_val) + 1) * weight
             
@@ -232,13 +191,11 @@ def compute_neuron_direct(inputs_weights, bias, response):
     stage2 = stage1 * response
     
     if complexity in ['complex', 'ultra_complex']:
-        # Add expensive trigonometric operations
         stage3 = stage2 + 0.1 * np.sin(stage1 * np.pi)
-        stage4 = stage3 + 0.05 * np.exp(-abs(stage2 * 0.5))  # Clamped exp
+        stage4 = stage3 + 0.05 * np.exp(-abs(stage2 * 0.5))
         pre_activation = stage4
         
         if complexity == 'ultra_complex':
-            # Even more expensive operations
             stage5 = stage4 + 0.03 * np.cos(stage1 * 2 * np.pi)
             stage6 = stage5 + 0.02 * np.sqrt(abs(stage4) + 1e-8)
             stage7 = stage6 + 0.01 * np.log(abs(stage5) + 1)
@@ -248,15 +205,12 @@ def compute_neuron_direct(inputs_weights, bias, response):
     
     # Phase 3: Activation function
     if complexity == 'simple':
-        # Simple tanh activation
         output = np.tanh(pre_activation)
     elif complexity == 'medium':
-        # Dual activation
         tanh_comp = np.tanh(pre_activation)
         sigmoid_comp = 1 / (1 + np.exp(-np.clip(pre_activation * 0.5, -10, 10)))
         output = 0.7 * tanh_comp + 0.3 * sigmoid_comp
-    else:  # complex or ultra_complex
-        # Multi-component activation
+    else:
         tanh_comp = np.tanh(pre_activation)
         sigmoid_comp = 1 / (1 + np.exp(-np.clip(pre_activation * 0.5, -10, 10)))
         swish_comp = pre_activation / (1 + np.exp(-np.clip(pre_activation, -10, 10)))
@@ -280,23 +234,20 @@ def compute_neuron_direct(inputs_weights, bias, response):
     else:
         final_output = normalized_output
     
-    # Apply output processing for cache optimization (SAME for both cached and non-cached)
     return process_neural_output(final_output)
 
 def compute_neuron_with_generational_cache(inputs_weights, bias, response):
+    """Compute neuron output with LRU caching"""
     global cache_stats
     
     cache_stats['total_calls'] += 1
     
-    # If caching is disabled, compute directly
     if not ABLATION_CONFIG['USE_CACHING']:
         return compute_neuron_direct(inputs_weights, bias, response)
     
-    # Check if we should cache this computation
     if ABLATION_CONFIG['USE_CONDITIONAL_CACHING'] and not should_cache_computation(inputs_weights):
         return compute_neuron_direct(inputs_weights, bias, response)
     
-    # Create cache key
     cache_key = create_cache_key(inputs_weights, bias, response)
     if cache_key is None:
         return compute_neuron_direct(inputs_weights, bias, response)
@@ -307,7 +258,6 @@ def compute_neuron_with_generational_cache(inputs_weights, bias, response):
         cache_stats['hits'] += 1
         cache_stats['generation_hits'] += 1
         
-        # Move to end (most recently used)
         value = generational_cache[cache_key]
         del generational_cache[cache_key]
         generational_cache[cache_key] = value
@@ -318,20 +268,16 @@ def compute_neuron_with_generational_cache(inputs_weights, bias, response):
         cache_stats['generation_misses'] += 1
         
         result = compute_neuron_direct(inputs_weights, bias, response)
-        
-        # CRITICAL FIX: Just add to cache - NO size checking during generation!
-        # Let the cache grow freely during the generation
         generational_cache[cache_key] = result
         return result
 
 class GenerationalNeuralNetwork:
-    
+    """Neural network that builds cache across generations"""
     
     def __init__(self, genome, config):
         self.genome = genome
         self.config = config
         
-        # Network structure (optimized for repeated access)
         self.input_keys = tuple(sorted(config.genome_config.input_keys))
         self.output_keys = tuple(sorted(config.genome_config.output_keys))
         
@@ -340,33 +286,26 @@ class GenerationalNeuralNetwork:
         self.node_bias = {}
         self.node_response = {}
         
-        # Extract enabled connections
         for (input_key, output_key), conn in genome.connections.items():
             if conn.enabled:
                 if output_key not in self.node_inputs:
                     self.node_inputs[output_key] = []
                 self.node_inputs[output_key].append((input_key, conn.weight))
         
-        # Extract node properties
         for node_key, node in genome.nodes.items():
             self.node_bias[node_key] = getattr(node, 'bias', 0.0)
             self.node_response[node_key] = getattr(node, 'response', 1.0)
         
-        # Compute evaluation order (topological sort)
         self.eval_order = self._compute_evaluation_order()
-        
-        # Pre-allocate node values for efficiency
         self.node_values = {key: 0.0 for key in genome.nodes.keys()}
     
     def _compute_evaluation_order(self):
-        """Compute topological evaluation order for the network"""
+        """Compute topological evaluation order"""
         in_degree = {node_key: 0 for node_key in self.genome.nodes.keys()}
         
-        # Calculate in-degrees
         for output_key in self.node_inputs:
             in_degree[output_key] = len(self.node_inputs[output_key])
         
-        # Topological sort
         queue = list(self.input_keys)
         evaluation_order = []
         
@@ -374,7 +313,6 @@ class GenerationalNeuralNetwork:
             current_node = queue.pop(0)
             evaluation_order.append(current_node)
             
-            # Update dependent nodes
             for dependent_node in self.node_inputs:
                 for input_node, _ in self.node_inputs[dependent_node]:
                     if input_node == current_node:
@@ -385,27 +323,23 @@ class GenerationalNeuralNetwork:
         return tuple(evaluation_order)
     
     def activate(self, inputs):
-        # Reset node values
+        """Activate network using generational cache"""
         for key in self.node_values:
             self.node_values[key] = 0.0
         
-        # Set input values
         for i, input_key in enumerate(self.input_keys):
             if i < len(inputs):
                 self.node_values[input_key] = inputs[i]
         
-        # Process each neuron in topological order
         for node_key in self.eval_order:
             if node_key not in self.input_keys:
                 inputs_list = self.node_inputs.get(node_key, [])
                 if inputs_list:
-                    # Create inputs_weights tuple for caching
                     inputs_weights = tuple((self.node_values[input_key], weight)
                                          for input_key, weight in inputs_list)
                     bias = self.node_bias.get(node_key, 0.0)
                     response = self.node_response.get(node_key, 1.0)
                     
-                    # Compute with generational cache
                     self.node_values[node_key] = compute_neuron_with_generational_cache(
                         inputs_weights, bias, response
                     )
@@ -413,14 +347,13 @@ class GenerationalNeuralNetwork:
         return [self.node_values[key] for key in self.output_keys]
 
 def create_cache_optimized_features(obs):
+    """Create feature vector with quantization for caching"""
     try:
-        # Extract basic game state
         px = obs[RAM['paddle_x']] / 255.0
         bx = obs[RAM['ball_x']] / 255.0
         by = obs[RAM['ball_y']] / 255.0
         lives = obs[RAM['lives']] / 5.0
         score = min(obs[RAM['score']] / 1000.0, 10.0)
-        
         
         if ABLATION_CONFIG['FEATURE_QUANTIZATION']:
             precision = 50  
@@ -430,48 +363,32 @@ def create_cache_optimized_features(obs):
             lives = round(lives * precision) / precision
             score = round(score * precision) / precision
         
-        # Build more diverse feature set
         features = [
-            # Core game state (keep full precision for key features)
             px, bx, by, lives, score,
-            
-            # Strategic relationships (with controlled precision)
-            round(abs(px - bx), 3),  # Distance to ball (more precision)
-            round(abs(px - by), 3),  # Vertical relationship
-            
-            # Add MORE diverse derived features
+            round(abs(px - bx), 3),
+            round(abs(px - by), 3),
             round(px ** 2, 3), round(bx ** 2, 3), round(by ** 2, 3),
             round(px * bx, 3), round(px * by, 3), round(bx * by, 3),
-            
-            # Velocity approximations (add temporal diversity)
             round((px - getattr(create_cache_optimized_features, 'prev_px', px)), 3),
             round((bx - getattr(create_cache_optimized_features, 'prev_bx', bx)), 3),
             round((by - getattr(create_cache_optimized_features, 'prev_by', by)), 3),
-            
-            # Strategic positioning with more precision
-            round((px - 0.5) ** 2, 3),  # Distance from center
-            round(px / (bx + 0.01), 3),  # Relative positioning
-            
-            # Add game-state dependent features for more diversity
-            round(px * lives, 3),      # Life-dependent positioning
-            round(bx * score / 1000.0, 3),  # Score-dependent ball tracking
-            
-            # Trigonometric features (with better precision)
+            round((px - 0.5) ** 2, 3),
+            round(px / (bx + 0.01), 3),
+            round(px * lives, 3),
+            round(bx * score / 1000.0, 3),
             round(np.sin(px * 2 * np.pi), 3),
             round(np.cos(px * 2 * np.pi), 3),
             round(np.sin(bx * 2 * np.pi), 3),
             round(np.cos(bx * 2 * np.pi), 3),
         ]
         
-        # Store previous values for velocity
         create_cache_optimized_features.prev_px = px
         create_cache_optimized_features.prev_bx = bx
         create_cache_optimized_features.prev_by = by
         
-        # Pad to target size with hash-based deterministic values instead of zeros
+        # Pad to target size
         target_size = ABLATION_CONFIG['FEATURE_SIZE']
         while len(features) < target_size:
-            # Add hash-based deterministic "noise" instead of zeros for diversity
             hash_input = len(features) + int(px * 1000) + int(bx * 1000)
             noise_val = (hash(hash_input) % 1000) / 1000.0
             features.append(round(noise_val, 3))
@@ -481,20 +398,19 @@ def create_cache_optimized_features(obs):
     
     except Exception as e:
         print(f"Error in feature generation: {e}")
-        # Return more diverse fallback
         return (obs / 255.0 + np.random.uniform(-0.001, 0.001, obs.shape)).astype(np.float32)
 
 def create_generational_network(genome, config):
     return GenerationalNeuralNetwork(genome, config)
 
 def eval_genome(genome, config):
+    """Evaluate genome with generational cache building"""
     try:
         net = create_generational_network(genome, config)
     except Exception as e:
         print(f"Network creation error: {e}")
         return -1.0
     
-    # Set up environment with genome-specific seed for diversity
     env_seed = RANDOM_SEED + hash(str(genome.key)) % 1000
     env = gym.make(ENV_NAME, obs_type="ram", render_mode=None)
     env.action_space.seed(env_seed)
@@ -522,9 +438,7 @@ def eval_genome(genome, config):
                 action = 1  # Fire ball
             else:
                 try:
-                    # Create features optimized for cache hits
                     game_inputs = create_cache_optimized_features(obs)
-                    # Network activation builds generational cache
                     network_outputs = net.activate(game_inputs)
                     action = int(np.argmax(network_outputs) % env.action_space.n)
                 except Exception as network_error:
@@ -608,34 +522,22 @@ def eval_genome(genome, config):
     return max(fitness, -1.0)
 
 def get_generational_cache_stats():
+    """Get comprehensive cache statistics"""
     total_calls = cache_stats['total_calls']
     
-    # If caching is disabled, return zero stats
     if not ABLATION_CONFIG['USE_CACHING']:
         return {
             'cache_performance': {
-                'hit_rate': 0.0,
-                'total_hits': 0,
-                'total_misses': 0,
-                'hits': 0,
-                'misses': 0,
-                'generation_hits': 0,
-                'generation_misses': 0,
-                'total_calls': total_calls,
-                'cache_size': 0,
-                'max_cache_size': 0,
-                'cache_utilization': 0.0
+                'hit_rate': 0.0, 'total_hits': 0, 'total_misses': 0,
+                'hits': 0, 'misses': 0, 'generation_hits': 0,
+                'generation_misses': 0, 'total_calls': total_calls,
+                'cache_size': 0, 'max_cache_size': 0, 'cache_utilization': 0.0
             },
             'configuration': dict(ABLATION_CONFIG)
         }
     
-    # Normal cache statistics when caching is enabled
     total_cache_ops = cache_stats['hits'] + cache_stats['misses']
-    
-    if total_cache_ops == 0:
-        hit_rate = 0
-    else:
-        hit_rate = cache_stats['hits'] / total_cache_ops
+    hit_rate = cache_stats['hits'] / total_cache_ops if total_cache_ops > 0 else 0
     
     return {
         'cache_performance': {
@@ -655,17 +557,16 @@ def get_generational_cache_stats():
     }
 
 def trim_cache_between_generations():
+    """Trim cache using LRU eviction"""
     global generational_cache
     
     if not ABLATION_CONFIG['USE_CACHING']:
         return
     
-    target_size = ABLATION_CONFIG['CACHE_SIZE']  # 100,000
+    target_size = ABLATION_CONFIG['CACHE_SIZE']
     current_size = len(generational_cache)
     
-    print(f"\n{'='*50}")
-    print(f"BETWEEN-GENERATION CACHE TRIMMING")
-    print(f"{'='*50}")
+    print(f"\nBETWEEN-GENERATION CACHE TRIMMING")
     print(f"Current cache size: {current_size:,}")
     print(f"Target cache size: {target_size:,}")
     
@@ -673,14 +574,11 @@ def trim_cache_between_generations():
         print(f"✅ Cache within limits - no trimming needed")
         return
     
-    # Calculate how many entries to remove
     excess = current_size - target_size
     print(f"Need to remove: {excess:,} entries")
+    
     trim_start = time.time()
-    
     keys_to_remove = list(generational_cache.keys())[:excess]
-    
-    print(f"Removing {len(keys_to_remove):,} oldest entries...")
     
     for key in keys_to_remove:
         if key in generational_cache:
@@ -691,30 +589,20 @@ def trim_cache_between_generations():
     
     print(f"Trimming completed in {trim_time:.3f}s")
     print(f"Before: {current_size:,} → After: {final_size:,}")
-    print(f"Removed: {current_size - final_size:,} entries")
-    
-    if final_size == target_size:
-        print(f"✅ SUCCESS: Cache exactly at target size")
-    elif final_size < target_size:
-        print(f"✅ SUCCESS: Cache under target ({target_size - final_size:,} room left)")
-    else:
-        print(f"❌ ERROR: Still over target by {final_size - target_size:,}")
 
 def clear_generational_cache():
+    """Clear entire generational cache"""
     global generational_cache, cache_stats
     
-    print(f"DEBUG: Clearing cache. Current size: {len(generational_cache)}")
     generational_cache.clear()
-    print(f"DEBUG: Cache cleared. New size: {len(generational_cache)}")
-    
     cache_stats = {
         'hits': 0, 'misses': 0, 'total_calls': 0,
         'generation_hits': 0, 'generation_misses': 0,
         'cache_size_history': [], 'hit_rate_history': []
     }
-    print("DEBUG: Cache stats reset")
 
 def print_generational_cache_analysis():
+    """Print detailed cache performance analysis"""
     if not ABLATION_CONFIG['CACHE_DEBUG']:
         return
     
@@ -722,18 +610,14 @@ def print_generational_cache_analysis():
     cache_perf = stats['cache_performance']
     config = stats['configuration']
     
-    print("\n" + "="*70)
-    print("GENERATIONAL CACHE ANALYSIS")
-    print("="*70)
+    print("\nGENERATIONAL CACHE ANALYSIS")
     print(f"Configuration:")
     print(f"  • Caching: {'ENABLED' if config['USE_CACHING'] else 'DISABLED'}")
     print(f"  • Target cache size: {config['CACHE_SIZE']:,}")
-    print(f"  • Strategy: GROW during generation, TRIM between generations")
     print(f"  • Computation complexity: {config['COMPUTATION_COMPLEXITY']}")
     print(f"  • Precision level: {config['PRECISION_LEVEL']}")
-    print(f"  • Feature quantization: {'YES' if config['FEATURE_QUANTIZATION'] else 'NO'}")
     
-    print(f"\nGenerational Cache Performance:")
+    print(f"\nCache Performance:")
     print(f"  • Current cache size: {cache_perf['cache_size']:,} / {cache_perf['max_cache_size']:,}")
     print(f"  • Overall hit rate: {cache_perf['hit_rate']:.1%}")
     print(f"  • Total hits: {cache_perf['total_hits']:,}")
@@ -744,54 +628,32 @@ def print_generational_cache_analysis():
     if cache_perf['generation_hits'] + cache_perf['generation_misses'] > 0:
         gen_hit_rate = cache_perf['generation_hits'] / (cache_perf['generation_hits'] + cache_perf['generation_misses'])
         print(f"  • This generation hit rate: {gen_hit_rate:.1%}")
-        
-        if CURRENT_GENERATION > 1:
-            print(f"  • Building on previous generations: {'YES' if gen_hit_rate > 0 else 'NO'}")
     
-    # Cache effectiveness analysis
     cache_utilization = cache_perf['cache_size'] / cache_perf['max_cache_size'] if cache_perf['max_cache_size'] > 0 else 0
-    print(f"Cache Effectiveness:")
     print(f"  • Cache utilization: {cache_utilization:.1%}")
-    print(f"  • LRU Strategy: Trim oldest entries between generations")
-    
-    if cache_perf['hit_rate'] > 0.5:
-        print(f"  • Status: ✅ Excellent cache performance (>50% hit rate)")
-    elif cache_perf['hit_rate'] > 0.2:
-        print(f"  • Status: ⚡ Good cache performance (20-50% hit rate)")
-    elif cache_perf['hit_rate'] > 0.05:
-        print(f"  • Status: 📊 Moderate cache performance (5-20% hit rate)")
-    else:
-        print(f"  • Status: ⚠️ Low cache performance (<5% hit rate)")
-    
-    if cache_perf['cache_size'] > cache_perf['max_cache_size']:
-        excess = cache_perf['cache_size'] - cache_perf['max_cache_size']
-        print(f"  • Note: Cache temporarily over limit by {excess:,} entries (will trim next generation)")
 
 def eval_genomes(genomes, config):
+    """Evaluate genomes with cache management"""
     global CURRENT_GENERATION
     
-    # CRITICAL FIX: Trim cache BEFORE starting the generation (except generation 1)
+    # Trim cache before generation (except first)
     if CURRENT_GENERATION > 1:
-        print(f"\n🔧 BEFORE Generation {CURRENT_GENERATION}: Trimming cache from previous generation")
+        print(f"\n🔧 BEFORE Generation {CURRENT_GENERATION}: Trimming cache")
         trim_cache_between_generations()
     else:
         print(f"\n🔧 Generation {CURRENT_GENERATION}: First generation - no trimming needed")
     
-    # Reset generation-specific stats
     cache_stats['generation_hits'] = 0
     cache_stats['generation_misses'] = 0
     
     cache_start_size = len(generational_cache)
     
-    print(f"\n{'='*60}")
-    print(f"GENERATION {CURRENT_GENERATION} - EVALUATION PHASE")
+    print(f"\nGENERATION {CURRENT_GENERATION} - EVALUATION PHASE")
     print(f"Cache size at start: {cache_start_size:,}")
-    print(f"Strategy: GROW freely during generation, TRIM between generations")
-    print(f"{'='*60}")
     
     generation_start_time = time.time()
     
-    # Evaluate each genome - cache grows freely during this phase
+    # Evaluate each genome
     for i, (genome_id, genome) in enumerate(genomes):
         print(f"Genome {i+1}/{len(genomes)}: {genome_id}", end=" ")
         start_time = time.time()
@@ -809,25 +671,20 @@ def eval_genomes(genomes, config):
     print(f"  • Cache hits: {cache_stats['generation_hits']:,}")
     print(f"  • Cache misses: {cache_stats['generation_misses']:,}")
     
-    # Don't trim here - let cache overflow until next generation
     if cache_end_size > ABLATION_CONFIG['CACHE_SIZE']:
         excess = cache_end_size - ABLATION_CONFIG['CACHE_SIZE']
         print(f"  • Cache now over limit by {excess:,} - will trim BEFORE next generation")
     else:
         print(f"  • Cache still within limits")
     
-    # Print detailed cache analysis
     print_generational_cache_analysis()
 
 def get_research_metrics():
+    """Get comprehensive metrics for research"""
     stats = get_generational_cache_stats()
     cache_perf = stats['cache_performance']
     
-    # Safe cache utilization calculation
-    if cache_perf['max_cache_size'] > 0:
-        cache_utilization = cache_perf['cache_size'] / cache_perf['max_cache_size']
-    else:
-        cache_utilization = 0.0
+    cache_utilization = cache_perf['cache_size'] / cache_perf['max_cache_size'] if cache_perf['max_cache_size'] > 0 else 0.0
     
     return {
         'cache_metrics': {
@@ -847,6 +704,7 @@ def get_research_metrics():
     }
 
 class AblationReporter(neat.reporting.BaseReporter):
+    """Reporter for ablation study experiments"""
     
     def __init__(self, config_path, experiment_name="generational_cache"):
         self.best_genomes = []
@@ -858,7 +716,7 @@ class AblationReporter(neat.reporting.BaseReporter):
         self.results_dir = f'ablation_results_{experiment_name}'
         os.makedirs(self.results_dir, exist_ok=True)
         
-        # Create detailed CSV for ablation analysis
+        # Create CSV for results
         self.csv_filename = f'{self.results_dir}/ablation_data_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
         with open(self.csv_filename, 'w', newline='') as csvfile:
             csv.writer(csvfile).writerow([
@@ -872,6 +730,7 @@ class AblationReporter(neat.reporting.BaseReporter):
             ])
     
     def post_evaluate(self, config, population, species, best_genome):
+        """Called after each generation evaluation"""
         global CURRENT_GENERATION
         generation = len(self.best_genomes) + 1
         CURRENT_GENERATION = generation
@@ -879,18 +738,15 @@ class AblationReporter(neat.reporting.BaseReporter):
         elapsed_time = time.time() - self.start_time
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Calculate fitness statistics
         fitness_values = [genome.fitness for genome in population.values()]
         avg_fitness = sum(fitness_values) / len(fitness_values)
         
-        # Get comprehensive metrics
         metrics = get_research_metrics()
         cache_metrics = metrics['cache_metrics']
         config_metrics = metrics['configuration']
         
         cache_utilization = cache_metrics['cache_utilization']
         
-        # Store generation data
         generation_data = {
             'generation': generation,
             'best_fitness': best_genome.fitness,
@@ -901,13 +757,13 @@ class AblationReporter(neat.reporting.BaseReporter):
         }
         self.generation_stats.append(generation_data)
         
-        # Write to CSV 
+        # Write to CSV
         with open(self.csv_filename, 'a', newline='') as csvfile:
             csv.writer(csvfile).writerow([
                 generation, best_genome.fitness, avg_fitness, elapsed_time,
                 cache_metrics['hit_rate'], cache_metrics['total_hits'],
                 cache_metrics['total_misses'], cache_metrics['cache_size'],
-                cache_utilization,  # FIXED: This should be decimal (0.0-1.0), not >= 1.0
+                cache_utilization,
                 cache_metrics['generation_hits'], cache_metrics['generation_misses'], 
                 config_metrics['USE_CACHING'], config_metrics['COMPUTATION_COMPLEXITY'], 
                 config_metrics['PRECISION_LEVEL'], config_metrics['USE_FAST_KEYS'], 
@@ -924,19 +780,18 @@ class AblationReporter(neat.reporting.BaseReporter):
             pickle.dump(best_genome, f)
         
         # Print summary
-        print(f"\n=== FIXED LRU CACHE REPORT - Generation {generation} ===")
+        print(f"\n=== LRU CACHE REPORT - Generation {generation} ===")
         print(f"Best fitness: {best_genome.fitness:.2f}")
         print(f"Average fitness: {avg_fitness:.2f}")
         if config_metrics['USE_CACHING']:
             print(f"Cache performance: {cache_metrics['hit_rate']:.1%} hit rate")
             print(f"Cache size: {cache_metrics['cache_size']:,} / {cache_metrics['max_cache_size']:,}")
             print(f"Cache utilization: {cache_utilization:.1%}")
-        print(f"Strategy: Grow during generation, trim between generations")
 
 def run_ablation_experiment(config_path, experiment_config, num_generations=50, experiment_name="test"):
+    """Run ablation experiment with specified configuration"""
     global ABLATION_CONFIG, CURRENT_GENERATION
     
-    # Update global configuration
     ABLATION_CONFIG.update(experiment_config)
     CURRENT_GENERATION = 1
     
@@ -944,13 +799,11 @@ def run_ablation_experiment(config_path, experiment_config, num_generations=50, 
     print(f"ABLATION EXPERIMENT: {experiment_name.upper()}")
     print("="*80)
     
-    # Print configuration
     print("Configuration:")
     for key, value in ABLATION_CONFIG.items():
         print(f"  • {key}: {value}")
     print()
     
-    # Clear cache for fresh start
     clear_generational_cache()
     
     # Set up NEAT
@@ -974,10 +827,9 @@ def run_ablation_experiment(config_path, experiment_config, num_generations=50, 
     try:
         winner = population.run(eval_genomes_wrapper, num_generations)
         
-        print(f"\nAblation experiment '{experiment_name}' completed!")
+        print(f"\nExperiment '{experiment_name}' completed!")
         print(f"Best genome fitness: {winner.fitness:.2f}")
         
-        # Final cache analysis
         final_metrics = get_research_metrics()
         cache_final = final_metrics['cache_metrics']
         
@@ -986,7 +838,6 @@ def run_ablation_experiment(config_path, experiment_config, num_generations=50, 
         print(f"  • Cache size: {cache_final['cache_size']:,}")
         print(f"  • Total computations saved: {cache_final['total_hits']:,}")
         
-        # Calculate cache effectiveness over generations
         if len(cache_stats['hit_rate_history']) > 1:
             initial_hit_rate = cache_stats['hit_rate_history'][0] if cache_stats['hit_rate_history'] else 0
             final_hit_rate = cache_stats['hit_rate_history'][-1]
@@ -996,13 +847,19 @@ def run_ablation_experiment(config_path, experiment_config, num_generations=50, 
         return winner, reporter.generation_stats
     
     except Exception as e:
-        print(f"ERROR in ablation experiment '{experiment_name}': {e}")
+        print(f"ERROR in experiment '{experiment_name}': {e}")
         import traceback
         traceback.print_exc()
         return None, reporter.generation_stats
 
+def validate_cache_reset():
+    """Validate that cache is properly reset"""
+    assert len(generational_cache) == 0, f"Cache not empty: {len(generational_cache)} entries"
+    assert cache_stats['hits'] == 0, f"Cache hits not zero: {cache_stats['hits']}"
+    assert cache_stats['misses'] == 0, f"Cache misses not zero: {cache_stats['misses']}"
+    print("✅ Cache reset validation passed")
 
-# Main entry point for ablation experiments
+# Main entry point
 if __name__ == "__main__":
     force_complete_cache_reset()
     random.seed(RANDOM_SEED)
