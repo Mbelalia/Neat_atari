@@ -60,7 +60,6 @@ ABLATION_CONFIG = {
 
 # FORCE COMPLETE CACHE RESET FUNCTION
 def force_complete_cache_reset():
-    """Completely reset all cache state - call at script start"""
     global generational_cache, cache_stats
     
     # Force clear any existing cache
@@ -93,7 +92,6 @@ cache_stats = {
 generation_stats = {}
 
 def process_neural_output(raw_output):
-    """FIXED: Process neural network output with proper precision for diversity"""
     result = raw_output
     
     # Apply FP16 clamping if enabled
@@ -104,7 +102,7 @@ def process_neural_output(raw_output):
             # Convert to FP16 then back to FP32 (natural clamping + quantization)
             result = float(np.float16(result))
             # FIXED: Wider clamping for more diversity
-            result = np.clip(result, -5.0, 5.0)  # Was -2.0, 2.0
+            result = np.clip(result, -5.0, 5.0)  
         else:
             # Standard clamping with wider range
             result = np.clip(result, -5.0, 5.0)
@@ -1004,90 +1002,12 @@ def run_ablation_experiment(config_path, experiment_config, num_generations=50, 
         return None, reporter.generation_stats
 
 
-
-# VALIDATION AND TESTING FUNCTIONS
-def validate_cache_reset():
-    """Validate that cache is properly reset"""
-    assert len(generational_cache) == 0, f"Cache not empty: {len(generational_cache)} entries"
-    assert cache_stats['hits'] == 0, f"Cache hits not zero: {cache_stats['hits']}"
-    assert cache_stats['misses'] == 0, f"Cache misses not zero: {cache_stats['misses']}"
-    print("✅ Cache reset validation passed")
-
-def validate_feature_diversity(features_list):
-    """Validate that features show proper diversity"""
-    unique_features = len(set(tuple(f) for f in features_list))
-    total_features = len(features_list)
-    diversity_ratio = unique_features / total_features
-    
-    print(f"Feature diversity: {unique_features}/{total_features} = {diversity_ratio:.1%}")
-    
-    if diversity_ratio < 0.7:
-        print(f"⚠️  WARNING: Low feature diversity ({diversity_ratio:.1%})")
-    else:
-        print(f"✅ Good feature diversity ({diversity_ratio:.1%})")
-    
-    return diversity_ratio
-
-def validate_fitness_diversity(fitness_list):
-    """Validate that fitness values show proper diversity"""
-    unique_fitness = len(set(round(f, 2) for f in fitness_list))
-    total_fitness = len(fitness_list)
-    diversity_ratio = unique_fitness / total_fitness
-    
-    print(f"Fitness diversity: {unique_fitness}/{total_fitness} = {diversity_ratio:.1%}")
-    
-    if diversity_ratio < 0.5:
-        print(f"⚠️  WARNING: Low fitness diversity ({diversity_ratio:.1%}) - networks too similar")
-    else:
-        print(f"✅ Good fitness diversity ({diversity_ratio:.1%})")
-    
-    return diversity_ratio
-
-def force_cache_to_target():
-    """Emergency function to force cache to exactly target size"""
-    global generational_cache
-    
-    target_size = ABLATION_CONFIG['CACHE_SIZE']
-    current_size = len(generational_cache)
-    
-    if current_size <= target_size:
-        print(f"Cache already correct: {current_size:,} ≤ {target_size:,}")
-        return
-    
-    excess = current_size - target_size
-    print(f"🚨 EMERGENCY FIX: Removing {excess:,} entries")
-    
-    # Simple brute force removal
-    for _ in range(excess):
-        if generational_cache:
-            oldest_key = next(iter(generational_cache))
-            del generational_cache[oldest_key]
-        else:
-            break
-    
-    final_size = len(generational_cache)
-    print(f"Emergency fix: {current_size:,} → {final_size:,}")
-
 # Main entry point for ablation experiments
 if __name__ == "__main__":
-    # CRITICAL: Force complete cache reset at script start
     force_complete_cache_reset()
-    
-    # Set random seeds AFTER reset
     random.seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
-    
-    # Validate cache is empty
     validate_cache_reset()
     
-    local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(os.path.dirname(local_dir), 'config-feedforward-breakout')
-    
-    print("FORCED RESET: All cache variables cleared and validated")
-    
-    print("Running with LRU cache management...")
-    print("✅ Cache grows during generation, trims between generations")
-    print("✅ Cache utilization will stay ≤ 100% in CSV output")
-        
-    print("\n🚀 Starting experiment with FIXED LRU cache management...")
-    run_ablation_experiment(config_path, dict(ABLATION_CONFIG), 50, "fixed_lru_cache_WORKING")
+    print("🚀 Starting experiment...")
+    run_ablation_experiment('config-feedforward-breakout', dict(ABLATION_CONFIG), 50, "neat_cache")
