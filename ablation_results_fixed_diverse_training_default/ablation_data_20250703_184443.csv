@@ -1,3 +1,0 @@
-Generation,Best_Fitness,Avg_Fitness,Elapsed_Time_s,Cache_Hit_Rate,Cache_Hits,Cache_Misses,Cache_Size,Cache_Utilization,Generation_Hits,Generation_Misses,Use_Caching,Computation_Complexity,Precision_Level,Use_Fast_Keys,Use_Conditional_Caching,Feature_Quantization,Feature_Size,Cache_Max_Size,Cache_Eviction_Percentage,Generation_Time_s,Timestamp
-1,244.47099999999676,69.15099000000006,109.65125489234924,0,0,0,0,0.0,0,0,True,complex,minimal_cache,True,True,True,128,100000,0.1,0,2025-07-03 18:46:33
-2,302.44699999999625,83.62365599999995,225.40291237831116,0.3809831824062096,589,957,957,0.00957,589,957,True,complex,minimal_cache,True,True,True,128,100000,0.1,0,2025-07-03 18:48:29

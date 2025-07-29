@@ -1,2 +1,0 @@
-Generation,Best_Fitness,Avg_Fitness,Elapsed_Time_s,Cache_Hit_Rate,Cache_Hits,Cache_Misses,Cache_Size,Cache_Utilization,Generation_Hits,Generation_Misses,Use_Caching,Computation_Complexity,Precision_Level,Use_Fast_Keys,Use_Conditional_Caching,Feature_Quantization,Feature_Size,Cache_Max_Size,Cache_Eviction_Percentage,Generation_Time_s,Timestamp
-1,343.78899999999555,70.19563600000006,109.56472373008728,0,0,0,0,0.0,0,0,True,complex,maximal_cache,True,True,True,128,100000,0.1,0,2025-07-03 18:51:01
